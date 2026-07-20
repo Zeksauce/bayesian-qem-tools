@@ -36,7 +36,7 @@ bayesian-qem-tools/
 Clone the repository:
 
 ```Bash
-git clone [https://github.com/your-username/bayesian-qem-tools.git](https://github.com/your-username/bayesian-qem-tools.git)
+git clone https://github.com/Zeksauce/bayesian-qem-tools.git
 cd bayesian-qem-tools
 ```
 Install dependencies:
@@ -77,7 +77,7 @@ To run the full demonstration script:
 python examples/single_qubit_demo.py
 ```
 ## Roadmap
-[x] Core Iterative Bayesian Unfolding (IBU) engine for readout mitigation
+[ ] Core Iterative Bayesian Unfolding (IBU) engine for readout mitigation
 
 [ ] Support for multi-qubit tensor product response matrices
 
