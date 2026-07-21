@@ -1,5 +1,5 @@
 import numpy as np
-from bayesian_qem.ibu import iterative_bayesian_unfolding
+from bayesian_qem import iterative_bayesian_unfolding
 
 def main():
     # Define a noisy response matrix for a 1-qubit system
