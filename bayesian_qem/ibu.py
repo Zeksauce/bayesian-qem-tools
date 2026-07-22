@@ -4,8 +4,12 @@ ibu.py
 File that contains the function iterative_bayesian_unfolding.
 """
 
+import logging
 import numpy as np
 from .exceptions import DimensionError, InvalidResponseMatrixError, ShapeError
+
+# Initialize a module-level logger
+logger = logging.getLogger(__name__)
 
 
 def iterative_bayesian_unfolding(
@@ -61,13 +65,15 @@ def iterative_bayesian_unfolding(
     # Validate observed counts match the response matrix
     if noisy_counts.shape[0] != response_matrix.shape[0]:
         raise DimensionError(
-            f"Response matrix {response_matrix.shape} and "
-            "observed counts {noisy_counts.shape} are mismatched dimensions."
+            f"Response matrix of shape: {response_matrix.shape} and "
+            f"observed counts of shape: {noisy_counts.shape} are mismatched dimensions."
         )
 
+    # Validate response matrix is non-negative
+    _validate_non_negative(response_matrix, "Response matrix entries")
+
     # Validate observed counts are non-negative
-    if np.any(noisy_counts < 0):
-        raise ValueError("Noisy counts cannot contain negative values.")
+    _validate_non_negative(noisy_counts, "Noisy counts")
 
     # Use inputted initial prior if given
     if initial_prior is not None:
@@ -75,19 +81,37 @@ def iterative_bayesian_unfolding(
         if initial_prior.shape != noisy_counts.shape:
             raise ShapeError(
                 f"Initial prior shape {initial_prior.shape} and "
-                "observed counts shape {noisy_counts.shape} must be the same."
+                f"observed counts shape {noisy_counts.shape} must be the same."
             )
-        # Normalize inputted prior
-        current_prior = initial_prior / initial_prior.sum()
+
+        # Validate prior probabilities are non-negative
+        _validate_non_negative(initial_prior, "Prior probabilities")
+        prior_sum = initial_prior.sum()
+        if not np.allclose(prior_sum, 1, 1e-3):
+            logger.warning("Inputted prior is not normalized")
+
+            # Normalize inputted prior
+            current_prior = initial_prior / prior_sum
+        else:
+            current_prior = initial_prior
+        logger.info("Using normalized custom initial prior.")
+        logger.debug("Custom prior values: %s", current_prior)
     else:
         # Start with a uniform prior
         current_prior = np.ones(len(noisy_counts)) / len(noisy_counts)
+        logger.info("Using a uniform initial prior.")
+        logger.debug("Uniform prior values: %s", current_prior)
 
     # Initialize the best estimate for counts
     estimated_true_counts = noisy_counts
+    logger.info(
+        "Iteration initialized with max_iterations=%d, tolerance=%e",
+        max_iterations,
+        tolerance,
+    )
 
     # Iterate through max_iteration times
-    for _ in range(max_iterations):
+    for i in range(max_iterations):
         # Normalizing constants are given by the sum of responses under prior
         normalizing_constants = (response_matrix @ current_prior)[:, np.newaxis]
 
@@ -103,10 +127,30 @@ def iterative_bayesian_unfolding(
         new_prior = estimated_true_counts / estimated_true_counts.sum()
         diff = np.linalg.norm(new_prior - current_prior, ord=1)
 
+        logger.debug("Iteration %d: L1 difference = %e", i + 1, diff)
+
         # Stop iterating if desired convergence is reached
         if diff < tolerance:
+            logger.info(
+                "Reached convergence tolerance (%e) using %d iterations",
+                tolerance,
+                i + 1,
+            )
             break
 
         current_prior = new_prior
+    else:
+        logger.warning(
+            "Reached max_iterations without reaching convergence tolerance (%e)",
+            tolerance,
+        )
 
+    logger.debug(
+        "Iterations complete. Final estimated true counts: %s", estimated_true_counts
+    )
     return estimated_true_counts
+
+
+def _validate_non_negative(array: np.ndarray, object_name: str) -> None:
+    if np.any(array < 0):
+        raise ValueError(f"{object_name} cannot contain negative values.")
