@@ -28,6 +28,10 @@ bayesian-qem-tools/
 ├── examples/             # Executable demonstrations
 │   └── single_qubit_demo.py
 │
+├── tests/                # Testing suite for core algorithms
+│   ├── __init__.py
+│   └── test_ibu.py
+│
 ├── requirements.txt      # Project dependencies
 ├── LICENSE               # Apache 2.0 License
 └── README.md
@@ -49,7 +53,7 @@ Here is how you can use the IBU module to correct a noisy single-qubit measureme
 
 ```Python
 import numpy as np
-from ibu_qem.ibu import iterative_bayesian_unfolding
+from bayesian_qem import iterative_bayesian_unfolding
 
 # 1. Define your noise response (confusion) matrix: R[i, j] = P(measured i | true j)
 response_matrix = np.array([
@@ -77,7 +81,7 @@ To run the full demonstration script:
 python examples/single_qubit_demo.py
 ```
 ## Roadmap
-[ ] Core Iterative Bayesian Unfolding (IBU) engine for readout mitigation
+[x] Core Iterative Bayesian Unfolding (IBU) engine for readout mitigation
 
 [ ] Support for multi-qubit tensor product response matrices
 
