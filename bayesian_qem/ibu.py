@@ -4,6 +4,7 @@ ibu.py
 File that contains the function iterative_bayesian_unfolding.
 """
 
+import numbers
 import logging
 import numpy as np
 from .exceptions import DimensionError, InvalidResponseMatrixError, ShapeError
@@ -46,8 +47,9 @@ def iterative_bayesian_unfolding(
         array([50., 50.])
     """
     # Validate the noisy counts and response matrix
-    _validate_inputs(noisy_counts, response_matrix, max_iterations, tolerance)
-
+    _validate_inputs(max_iterations, tolerance)
+    response_matrix = _initialize_response_matrix(response_matrix)
+    noisy_counts = _initialize_noisy_counts(noisy_counts, response_matrix)
     current_prior = _initialize_prior(initial_prior, noisy_counts)
 
     # Initialize the best estimate for counts
@@ -98,13 +100,25 @@ def iterative_bayesian_unfolding(
     return estimated_true_counts
 
 
-def _validate_inputs(
-    noisy_counts: np.ndarray[tuple[int], np.dtype[np.float64]],
+def _validate_array_like(array, object_str):
+    try:
+        array = np.asarray(array, dtype=np.float64)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"{object_str} must be an array-like, but received Type {type(array)}. Details: {e}"
+        ) from e
+    return array
+
+
+def _initialize_response_matrix(
     response_matrix: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-    max_iterations: int,
-    tolerance: float,
-) -> None:
-    """Validates shapes, dimensions, and physical constraints of all inputs."""
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    """Initialize the response matrix if it is valid"""
+    # Validate response matrix is a numpy array
+    response_matrix = _validate_array_like(response_matrix, "Response matrix")
+    # Validate non-negative response matrix
+    _validate_non_negative(response_matrix, "Response matrix entries")
+
     # Validate response matrix is 2 dimensional and square
     if (
         response_matrix.ndim != 2
@@ -121,29 +135,47 @@ def _validate_inputs(
             "Response matrix columns must sum to 1 (representing valid transition probabilities). "
             f"Found column sums: {col_sums}"
         )
+    return response_matrix
 
+
+def _initialize_noisy_counts(
+    noisy_counts: np.ndarray[tuple[int], np.dtype[np.float64]],
+    response_matrix: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+
+    # Validate array-like noisy counts structure
+    noisy_counts = _validate_array_like(noisy_counts, "Noisy counts")
+    # Validate non-negative noisy counts
+    _validate_non_negative(noisy_counts, "Noisy counts")
     # Validate observed counts match the response matrix
     if noisy_counts.shape[0] != response_matrix.shape[0]:
         raise DimensionError(
             f"Response matrix of shape: {response_matrix.shape} and "
             f"observed counts of shape: {noisy_counts.shape} are mismatched dimensions."
         )
+    return noisy_counts
 
-    # Validate non-negative response matrix
-    _validate_non_negative(response_matrix, "Response matrix entries")
 
-    # Validate non-negative noisy counts
-    _validate_non_negative(noisy_counts, "Noisy counts")
-
-    # Validate max_iterations is an integer type
-    if not isinstance(max_iterations, int):
+def _validate_inputs(
+    max_iterations: int,
+    tolerance: float,
+) -> None:
+    """Validates shapes, dimensions, and physical constraints of all inputs."""
+    # Validate max_iterations is an integer type (excluding booleans)
+    if not isinstance(max_iterations, int) or isinstance(tolerance, bool):
         raise ValueError(
-            f"Max iterations must be an integer, but received {max_iterations}."
+            f"Max iterations must be a positive integer, but received {max_iterations}."
         )
     # Validate positive max iterations
     if max_iterations <= 0:
         raise ValueError(
             f"Max iterations must be a positive integer, but received {max_iterations}."
+        )
+
+    # Validate tolerance is a numeric type (excluding booleans)
+    if not isinstance(tolerance, numbers.Number) or isinstance(tolerance, bool):
+        raise ValueError(
+            f"Tolerance must be a positive number, but received {tolerance}."
         )
 
     # Validate positive tolerance
