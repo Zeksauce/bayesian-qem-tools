@@ -283,4 +283,4 @@ def test_prior_shape_mismatch(basic_setup, prior):
         f"Initial prior shape {prior.shape} and "
         f"observed counts shape {noisy_counts.shape} must be the same."
     )
-    _validate_error_raised_in_ibu(ShapeError, msg, noisy_counts, response_matrix, prior)
+    _validate_error_raised_in_ibu(ShapeError, msg, noisy_counts, response_matrix, initial_prior=prior)
