@@ -105,7 +105,8 @@ def _validate_array_like(array, object_str):
         array = np.asarray(array, dtype=np.float64)
     except (TypeError, ValueError) as e:
         raise ValueError(
-            f"{object_str} must be an array-like, but received Type {type(array)}. Details: {e}"
+            f"{object_str} must be a numerical array-like, "
+            f"but received Type {type(array)}. Details: {e}"
         ) from e
     return array
 
@@ -192,6 +193,7 @@ def _initialize_prior(
     """Initializes a uniform or normalized user-inputted prior."""
     # Use inputted initial prior if given
     if initial_prior is not None:
+        initial_prior = _validate_array_like(initial_prior, "Inputted prior")
         # Validate equal shape of prior and observed counts
         if initial_prior.shape != noisy_counts.shape:
             raise ShapeError(
