@@ -72,6 +72,26 @@ def test_ibu_basic_convergence(basic_setup):
     _is_valid_expected_solution(mitigated, noisy_counts, expected_output)
 
 
+@pytest.mark.parametrize("prior", [[1, 0], [0.5, 0.5], ["0.1", "0.9"], ["0", "1e0"]])
+def test_ibu_normalized_prior(basic_setup, prior):
+    """Ensure algorithm runs when initial prior is not properly normalized."""
+    response_matrix, noisy_counts, _ = basic_setup
+    mitigated = iterative_bayesian_unfolding(
+        noisy_counts, response_matrix, initial_prior=prior
+    )
+    _is_valid_solution(mitigated, noisy_counts)
+
+
+@pytest.mark.parametrize("prior", [[10, 0], [5, 0], [0.1, 0.5], [50, 50]])
+def test_ibu_unnormalized_prior(basic_setup, prior):
+    """Ensure algorithm runs when initial prior is not properly normalized."""
+    response_matrix, noisy_counts, _ = basic_setup
+    mitigated = iterative_bayesian_unfolding(
+        noisy_counts, response_matrix, initial_prior=prior
+    )
+    _is_valid_solution(mitigated, noisy_counts)
+
+
 @pytest.mark.parametrize("iterations", [1, 5, 10, 20])
 def test_ibu_varying_iterations(basic_setup, iterations):
     """Ensure the unfolding algorithm maintains valid non-negative counts
@@ -83,33 +103,44 @@ def test_ibu_varying_iterations(basic_setup, iterations):
     _is_valid_expected_solution(mitigated, noisy_counts, expected_output)
 
 
-
 @pytest.mark.parametrize(
-    "response_matrix", [ValueError, TypeError]
+    "response_matrix",
+    [
+        "[[0,2,1],[0,20,0]]",
+        ValueError,
+        TypeError,
+        [["e", "b"], [0, 1]],
+        [[1, 0], [0, []]],
+    ],
 )
 def test_ibu_varying_non_array_response_matrix(basic_setup, response_matrix):
     """Ensure algorithm raises ValueErrors for Response Matrices that are not array-like"""
     _, noisy_counts, _ = basic_setup
-    msg = f"Response matrix must be an array-like, but received Type {type(response_matrix)}."
+    msg = (
+        "Response matrix must be a numerical array-like, "
+        f"but received Type {type(response_matrix)}."
+    )
     _validate_error_raised_in_ibu(
         ValueError,
         msg,
         noisy_counts,
         response_matrix,
     )
-@pytest.mark.parametrize(
-    "noisy_counts", [ValueError, TypeError]
-)
+
+
+@pytest.mark.parametrize("noisy_counts", ["[0,2,1]", ValueError, TypeError, ["e", 0]])
 def test_ibu_varying_non_array_noisy_counts(basic_setup, noisy_counts):
     """Ensure algorithm raises ValueErrors for noisy counts that are not array-like"""
     response_matrix, _, _ = basic_setup
-    msg = f"Noisy counts must be an array-like, but received Type {type(noisy_counts)}."
+    msg = f"Noisy counts must be a numerical array-like, but received Type {type(noisy_counts)}."
     _validate_error_raised_in_ibu(
         ValueError,
         msg,
         noisy_counts,
         response_matrix,
     )
+
+
 @pytest.mark.parametrize(
     "iterations", [-1.1, -1.0, -0.1, 0.0, 0.1, 1.0, 1.1, "1", "0", "test", None]
 )
@@ -140,11 +171,27 @@ def test_ibu_varying_invalid_int_iterations(basic_setup, iterations):
     )
 
 
-def test_ibu_mismatched_dimensions(basic_setup):
-    """Ensure algorithm raises error when response matrix dimensions don't match counts."""
+def test_ibu_non_square_response_matrix(basic_setup):
+    """Ensure algorithm raises error when response matrix is not square"""
     _, noisy_counts, _ = basic_setup
     bad_matrix = np.array([[0.9, 0.2, 0.1], [0.1, 0.8, 0.9]])
     msg = f"Response matrix {bad_matrix.shape} must be a 2D square matrix."
+    _validate_error_raised_in_ibu(
+        DimensionError,
+        msg,
+        noisy_counts,
+        bad_matrix,
+    )
+
+
+def test_ibu_mismatched_dimensions(basic_setup):
+    """Ensure algorithm raises error when response matrix dimensions don't match counts."""
+    _, noisy_counts, _ = basic_setup
+    bad_matrix = np.array([[0.9, 0.2, 0.1], [0.1, 0.8, 0.9], [0, 0, 0]])
+    msg = (
+        f"Response matrix of shape: {bad_matrix.shape} and "
+        f"observed counts of shape: {noisy_counts.shape} are mismatched dimensions."
+    )
     _validate_error_raised_in_ibu(
         DimensionError,
         msg,
@@ -208,7 +255,8 @@ def test_ibu_invalid_tolerance(basic_setup, bad_tolerance):
 
 
 def test_ibu_invalid_response_matrix_normalization(basic_setup):
-    """Ensure algorithm raises error when response matrix columns/rows do not sum to expected constraints."""
+    """Ensure algorithm raises error when response matrix
+    columns/rows do not sum to expected constraints."""
     _, noisy_counts, _ = basic_setup
     # Invalid sum matrix
     bad_matrix = np.array([[0.5, 0.2], [0.1, 0.8]])
@@ -224,11 +272,15 @@ def test_ibu_invalid_response_matrix_normalization(basic_setup):
     )
 
 
-def test_ibu_unnormalized_prior(basic_setup):
-    """Ensure algorithm runs when initial prior is not properly normalized."""
-    response_matrix, noisy_counts, expected_output = basic_setup
-    prior = np.array([50, 50])
-    mitigated = iterative_bayesian_unfolding(
-        noisy_counts, response_matrix, initial_prior=prior
+@pytest.mark.parametrize(
+    "prior", [np.array([10, 0, 0, 0, 0]), np.array([1]), np.array([])]
+)
+def test_prior_shape_mismatch(basic_setup, prior):
+    """Validate that a shape error is raised when prior dimensions
+    are not equal to the noisy count dimensions"""
+    response_matrix, noisy_counts, _ = basic_setup
+    msg = (
+        f"Initial prior shape {prior.shape} and "
+        f"observed counts shape {noisy_counts.shape} must be the same."
     )
-    _is_valid_expected_solution(mitigated, noisy_counts, expected_output)
+    _validate_error_raised_in_ibu(ShapeError, msg, noisy_counts, response_matrix, prior)
