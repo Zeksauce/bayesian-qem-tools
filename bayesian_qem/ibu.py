@@ -4,22 +4,26 @@ ibu.py
 File that contains the function iterative_bayesian_unfolding.
 """
 
+from typing import Callable
+from functools import partial
 import numbers
 import logging
 import numpy as np
 from .exceptions import DimensionError, InvalidResponseMatrixError, ShapeError
+from . import backend as ibu_backend
 
 # Initialize a module-level logger
 logger = logging.getLogger(__name__)
 
 
 def iterative_bayesian_unfolding(
-    noisy_counts: np.ndarray[tuple[int], np.dtype[np.float64]],
-    response_matrix: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-    initial_prior: np.ndarray[tuple[int], np.dtype[np.float64]] | None = None,
+    noisy_counts: np.ndarray,
+    response_matrix: np.ndarray | None = None,
+    local_matrices: list[np.ndarray] | None = None,
+    initial_prior: np.ndarray | None = None,
     max_iterations: int = 10,
     tolerance: float = 1e-6,
-) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+) -> np.ndarray:
     """
     Solves for likely physically accurate true outputs from
     a quantum circuit's noisy outputs and calibration classifications.
@@ -29,6 +33,8 @@ def iterative_bayesian_unfolding(
         response_matrix: The square calibration response matrix where rows
             correspond to measured states and columns correspond to true states
             (entry [i, j] is the probability of measuring state i given true state j).
+        local_matrices: The collection of clustered correlated qubit systems and their
+            square calibration responses.
         initial_prior: Optional starting prior distribution.
             Defaults to using an uninformed uniform prior.
         max_iterations: Optional maximum number of IBU iterations to run.
@@ -46,31 +52,101 @@ def iterative_bayesian_unfolding(
         >>> iterative_bayesian_unfolding(counts, response)
         array([50., 50.])
     """
-    # Validate the noisy counts and response matrix
     _validate_inputs(max_iterations, tolerance)
-    response_matrix = _initialize_response_matrix(response_matrix)
-    noisy_counts = _initialize_noisy_counts(noisy_counts, response_matrix)
+    noisy_counts = _validate_array_like(noisy_counts, "Noisy counts")
+    _validate_non_negative(noisy_counts, "Noisy counts")
+
+    # Wrapper / Dispatcher logic: Selects the backend operations
+    matmul_forward, matmul_transpose = _select_backend(
+        noisy_counts, response_matrix, local_matrices
+    )
+
     current_prior = _initialize_prior(initial_prior, noisy_counts)
 
-    # Initialize the best estimate for counts
+    # Run the decoupled core loop
+    return _run_ibu_loop(
+        noisy_counts,
+        current_prior,
+        matmul_forward,
+        matmul_transpose,
+        max_iterations,
+        tolerance,
+    )
+
+
+def _select_backend(noisy_counts, response_matrix, local_matrices):
+    """Dispatcher wrapper to choose between dense or tensor-product backends."""
+    if response_matrix is not None and local_matrices is not None:
+        raise ValueError(
+            "Provide either `response_matrix` or `local_matrices`, not both."
+        )
+
+    if response_matrix is not None:
+        response_matrix = _initialize_response_matrix(response_matrix)
+        # Validate shape match for dense mode
+        if noisy_counts.shape[0] != response_matrix.shape[0]:
+            raise DimensionError(
+                f"Response matrix of shape: {response_matrix.shape} and "
+                f"observed counts of shape: {noisy_counts.shape} are mismatched dimensions."
+            )
+
+        matmul_forward = partial(
+            ibu_backend.apply_dense_response, response_matrix=response_matrix
+        )
+        matmul_transpose = partial(
+            ibu_backend.apply_dense_transpose, response_matrix=response_matrix
+        )
+
+    elif local_matrices is not None:
+        expected_size = 2 ** len(local_matrices)
+        if noisy_counts.shape[0] != expected_size:
+            raise DimensionError(
+                f"Noisy counts size {noisy_counts.shape[0]} "
+                f"does not match tensor product system size {expected_size}."
+            )
+
+        matmul_forward = partial(
+            ibu_backend.apply_tensor_response, local_matrices=local_matrices
+        )
+        matmul_transpose = partial(
+            ibu_backend.apply_tensor_transpose, local_matrices=local_matrices
+        )
+
+    else:
+        raise ValueError("Must provide either `response_matrix` or `local_matrices`.")
+    return matmul_forward, matmul_transpose
+
+
+def _run_ibu_loop(
+    noisy_counts: np.ndarray[tuple[int], np.dtype[np.float64]],
+    current_prior: np.ndarray[tuple[int], np.dtype[np.float64]],
+    matmul_forward: Callable[[np.ndarray], np.ndarray],
+    matmul_transpose: Callable[[np.ndarray], np.ndarray],
+    max_iterations: int,
+    tolerance: float,
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """Runs the core iterative expectation-maximization loop using backend operators."""
     estimated_true_counts = noisy_counts
+
     logger.info(
         "Iteration initialized with max_iterations=%d, tolerance=%e",
         max_iterations,
         tolerance,
     )
+
     # Iterate through max_iteration times
     for i in range(max_iterations):
-        # Normalizing constants are given by the sum of responses under prior
-        normalizing_constants = (response_matrix @ current_prior)[:, np.newaxis]
+        # Normalizing constants are given by the forward operation under current prior
+        normalizing_constants = matmul_forward(current_prior)[:, np.newaxis]
 
-        # Posterior matrix is the likelihood * prior / normalizing constants
-        posterior_matrix = (
-            response_matrix * current_prior[np.newaxis, :] / normalizing_constants
+        # Prevent division by zero
+        normalizing_constants = np.where(
+            normalizing_constants == 0, 1e-12, normalizing_constants
         )
 
-        # Estimated counts are the posterior matrix times noisy counts
-        estimated_true_counts = posterior_matrix.T @ noisy_counts
+        # Estimated counts are computed using the transpose/backward operator
+        adjusted_counts = noisy_counts / normalizing_constants[:, 0]
+        estimated_true_counts = matmul_transpose(adjusted_counts) * current_prior
 
         # Prior is updated to the normalized estimated counts
         new_prior = estimated_true_counts / estimated_true_counts.sum()
@@ -101,6 +177,7 @@ def iterative_bayesian_unfolding(
 
 
 def _validate_array_like(array, object_str):
+    """Validates that an object can be transformed into a float 64 np.array"""
     try:
         array = np.asarray(array, dtype=np.float64)
     except (TypeError, ValueError) as e:
@@ -137,24 +214,6 @@ def _initialize_response_matrix(
             f"Found column sums: {col_sums}"
         )
     return response_matrix
-
-
-def _initialize_noisy_counts(
-    noisy_counts: np.ndarray[tuple[int], np.dtype[np.float64]],
-    response_matrix: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-
-    # Validate array-like noisy counts structure
-    noisy_counts = _validate_array_like(noisy_counts, "Noisy counts")
-    # Validate non-negative noisy counts
-    _validate_non_negative(noisy_counts, "Noisy counts")
-    # Validate observed counts match the response matrix
-    if noisy_counts.shape[0] != response_matrix.shape[0]:
-        raise DimensionError(
-            f"Response matrix of shape: {response_matrix.shape} and "
-            f"observed counts of shape: {noisy_counts.shape} are mismatched dimensions."
-        )
-    return noisy_counts
 
 
 def _validate_inputs(
